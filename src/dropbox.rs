@@ -1,15 +1,12 @@
 use common::{self, FileMeta, Service};
 use failure::Error;
 use futures::{Future, IntoFuture};
-use preferences::{Preferences, PreferencesMap};
-use reqwest;
-use reqwest::header::{Authorization, Bearer, ContentType};
-use reqwest::mime;
-use reqwest::unstable::async::{Client, Response};
+use preferences::Preferences;
+use reqwest::header::{Authorization, Bearer};
+use reqwest::unstable::async::Client;
 use serde_json::value;
 use serde_json::{self, Value};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::{io, str};
 use tokio_core::reactor::Handle;
 
@@ -20,6 +17,8 @@ const APP_SECRET: &'static str = env!("DROPBOX_APP_SECRET");
 pub struct Dropbox {
     token: String,
 }
+
+header! { (ApiArg, "Dropbox-API-Arg") => [String] }
 
 type Prefs = HashMap<String, String>;
 
@@ -78,18 +77,18 @@ impl Service for Dropbox {
             path = "";
         }
         let options = ListFolderArg {
-            path: path.to_string(),
+            path,
             ..Default::default()
         };
-        let req = Client::new(handle)
-            .post("https://api.dropboxapi.com/2/files/list_folder")
-            .header(Authorization(Bearer { token: self.token.clone() }))
-            //.header(ContentType(mime::APPLICATION_JSON))
-            .json(&options)
-            .send()
-            .from_err::<Error>();
         Box::new(
-            req.and_then(common::get_body)
+            Client::new(handle)
+                .post("https://api.dropboxapi.com/2/files/list_folder")
+                .header(Authorization(Bearer {
+                    token: self.token.clone(),
+                })).json(&options)
+                .send()
+                .from_err::<Error>()
+                .and_then(common::get_body)
                 .and_then(|response| {
                     serde_json::from_slice(response.as_ref()).map_err(|_| {
                         format_err!("{}", unsafe { str::from_utf8_unchecked(response.as_ref()) })
@@ -101,11 +100,30 @@ impl Service for Dropbox {
                 }),
         )
     }
+    fn download(&self, handle: &Handle, path: &str) -> Box<Future<Item = Vec<u8>, Error = Error>> {
+        let options = DownloadArg { path };
+        Box::new(
+            Client::new(handle)
+                .post("https://content.dropboxapi.com/2/files/download")
+                .header(Authorization(Bearer {
+                    token: self.token.clone(),
+                })).header(ApiArg(serde_json::to_string(&options).unwrap()))
+                .send()
+                .from_err::<Error>()
+                .and_then(common::get_body)
+                .map(|response| response.as_ref().to_owned()),
+        )
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ListFolderArg {
-    pub path: String,
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+struct DownloadArg<'a> {
+    pub path: &'a str,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+struct ListFolderArg<'a> {
+    pub path: &'a str,
     pub recursive: bool,
     pub include_media_info: bool,
     pub include_deleted: bool,
@@ -119,6 +137,7 @@ pub struct Metadata {
     pub id: String,
     /// The size in bytes
     pub size: Option<u64>,
+    pub path_lower: String,
 }
 
 impl FileMeta for Metadata {
@@ -127,6 +146,9 @@ impl FileMeta for Metadata {
     }
     fn size(&self) -> Option<u64> {
         self.size
+    }
+    fn path(&self) -> &str {
+        &self.path_lower
     }
 }
 
