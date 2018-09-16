@@ -1,6 +1,7 @@
 use common::{self, FileMeta, Service};
 use failure::Error;
-use futures::Future;
+use futures::{Future, IntoFuture};
+use preferences::{Preferences, PreferencesMap};
 use reqwest;
 use reqwest::header::{Authorization, Bearer, ContentType};
 use reqwest::mime;
@@ -15,39 +16,51 @@ use tokio_core::reactor::Handle;
 const APP_KEY: &'static str = env!("DROPBOX_APP_KEY");
 const APP_SECRET: &'static str = env!("DROPBOX_APP_SECRET");
 
-
+#[derive(Debug, Clone)]
 pub struct Dropbox {
     token: String
 }
 
+type Prefs = HashMap<String, String>;
+
 impl Service for Dropbox {
     type File = Metadata;
     fn new(handle: &Handle) -> Box<Future<Item=Dropbox, Error=Error>> {
-        println!("Copy & paste code from https://www.dropbox.com/oauth2/authorize?response_type=code&client_id={}", APP_KEY);
-        let mut code = String::new();
-        io::stdin().read_line(&mut code).unwrap();
-        let code = code.trim();
-        let mut params = HashMap::new();
-        params.insert("code", code);
-        params.insert("grant_type", "authorization_code");
-        params.insert("client_id", APP_KEY);
-        params.insert("client_secret", APP_SECRET);
-        Box::new(Client::new(handle)
-            .post("https://api.dropboxapi.com/oauth2/token")
-            .form(&params)
-            .send()
-            .from_err::<Error>()
-            .and_then(common::get_body)
-            .and_then(|response|
-                serde_json::from_slice(response.as_ref())
-                    .map_err(|_| format_err!("{}", unsafe { str::from_utf8_unchecked(response.as_ref()) })))
-            .from_err::<Error>()
-            .map(|token: OAuth2Token| Dropbox {
-                token: token.access_token
-            }))
+        if let Some(token) = Prefs::load(&::APP_INFO, "config/dropbox").ok().and_then(|prefs| prefs.get("token").cloned()) {
+            Box::new(Ok(Dropbox {
+                token
+            }).into_future())
+        } else {
+            println!("Copy & paste code from https://www.dropbox.com/oauth2/authorize?response_type=code&client_id={}", APP_KEY);
+            let mut code = String::new();
+            io::stdin().read_line(&mut code).unwrap();
+            let code = code.trim();
+            let mut params = HashMap::new();
+            params.insert("code", code);
+            params.insert("grant_type", "authorization_code");
+            params.insert("client_id", APP_KEY);
+            params.insert("client_secret", APP_SECRET);
+            Box::new(Client::new(handle)
+                .post("https://api.dropboxapi.com/oauth2/token")
+                .form(&params)
+                .send()
+                .from_err::<Error>()
+                .and_then(common::get_body)
+                .and_then(|response|
+                    serde_json::from_slice(response.as_ref())
+                        .map_err(|_| format_err!("{}", unsafe { str::from_utf8_unchecked(response.as_ref()) })))
+                .from_err::<Error>()
+                .and_then(|token: OAuth2Token| {
+                    let mut prefs = Prefs::default();
+                    prefs.insert("token".into(), token.access_token.clone());
+                    prefs.save(&::APP_INFO, "config/dropbox").map_err(Error::from).map(|_| token)
+                })
+                .map(|token: OAuth2Token| Dropbox {
+                    token: token.access_token
+                }))
+        }
     }
     fn list_folder(&self, handle: &Handle, mut path: &str) -> Box<Future<Item=Vec<Metadata>, Error=Error>> {
-        ;
         path = path.trim();
         if path == "/" {
             path = "";
