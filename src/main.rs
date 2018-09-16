@@ -19,8 +19,10 @@ use tokio_core::reactor::Core;
 mod common;
 mod dropbox;
 
-
-pub const APP_INFO: AppInfo = AppInfo { name: "manysync", author: "Tom B" };
+pub const APP_INFO: AppInfo = AppInfo {
+    name: "manysync",
+    author: "Tom B",
+};
 
 fn main() {
     let mut core = Core::new().unwrap();
