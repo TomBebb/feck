@@ -1,6 +1,6 @@
 use common::{self, FileMeta, Service};
 use failure::Error;
-use futures::{Future, IntoFuture};
+use futures::{Future, Stream, IntoFuture};
 use preferences::Preferences;
 use reqwest::header::{Authorization, Bearer};
 use reqwest::unstable::async::Client;
@@ -71,7 +71,7 @@ impl Service for Dropbox {
         &self,
         handle: &Handle,
         mut path: &str,
-    ) -> Box<Future<Item = Vec<Metadata>, Error = Error>> {
+    ) -> Box<Stream<Item = Metadata, Error = Error>> {
         path = path.trim();
         if path == "/" {
             path = "";
@@ -97,7 +97,7 @@ impl Service for Dropbox {
                 .and_then(|res: Value| {
                     value::from_value::<Vec<Metadata>>(res.get("entries").unwrap().clone())
                         .map_err(Error::from)
-                }),
+                })
         )
     }
     fn download(&self, handle: &Handle, path: &str) -> Box<Future<Item = Vec<u8>, Error = Error>> {

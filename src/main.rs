@@ -19,6 +19,7 @@ use futures::Future;
 use preferences::AppInfo;
 use std::path::Path;
 use tokio_core::reactor::Core;
+use futures::Stream;
 
 mod common;
 mod dropbox;
@@ -34,7 +35,8 @@ fn main() {
     let work = Dropbox::new(&handle).and_then(|dropbox| {
         dropbox
             .list_folder(&handle, "/")
-            .and_then(move |files| dropbox.download_to(&handle, files[0].path(), Path::new("poop")))
+            .and_then(move |file| dropbox.download_to(&handle, file.path(), Path::new(file.name())))
+            .collect()
     });
     println!("{:?}", core.run(work));
 }
